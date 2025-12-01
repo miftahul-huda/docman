@@ -65,7 +65,7 @@ header h1 {
 .app-logo {
     height: 250px;
     width: auto;
-    margin-top: -100px;
+    margin-top: -80px;
     z-index: -4;
     /*filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1));
     transition: transform 0.3s ease;*/
@@ -80,7 +80,7 @@ nav {
     display: flex;
     justify-content: center;
     margin-bottom: 20px;
-    margin-top: -80px;
+    margin-top: -40px;
 }
 
 .nav-links {
