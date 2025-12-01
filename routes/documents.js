@@ -178,6 +178,50 @@ router.put('/:id', async (req, res) => {
     }
 });
 
+// Get Single Document
+router.get('/:id', async (req, res) => {
+    try {
+        const document = await Document.findOne({ _id: req.params.id, owner: req.user._id });
+        if (!document) {
+            return res.status(404).json({ message: 'Document not found or unauthorized' });
+        }
+        res.json(document);
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+// Remove File from Document
+router.delete('/:id/files/:fileId', async (req, res) => {
+    try {
+        const document = await Document.findOne({ _id: req.params.id, owner: req.user._id });
+        if (!document) {
+            return res.status(404).json({ message: 'Document not found or unauthorized' });
+        }
+
+        const file = document.files.id(req.params.fileId);
+        if (!file) {
+            return res.status(404).json({ message: 'File not found' });
+        }
+
+        // Delete from Google Drive
+        const drive = getDriveClient(req.user);
+        try {
+            await drive.files.delete({ fileId: file.driveFileId });
+        } catch (driveError) {
+            console.error('Error deleting from Drive:', driveError);
+        }
+
+        // Remove from document
+        document.files.pull(req.params.fileId);
+        await document.save();
+
+        res.json({ message: 'File removed successfully' });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
 // Delete Document
 router.delete('/:id', async (req, res) => {
     console.log(`Delete request for ID: ${req.params.id}`);

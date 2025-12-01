@@ -459,3 +459,68 @@ tr:hover {
     min-width: 120px;
     text-align: center;
 }
+
+/* Custom Alert Styles */
+#alert-modal .modal-content {
+    animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+    from {
+        transform: translateY(-50px);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+#alert-icon.error {
+    color: #ff6b6b;
+}
+
+#alert-icon.success {
+    color: #51cf66;
+}
+
+#alert-icon.warning {
+    color: #ffd43b;
+}
+
+#alert-icon.info {
+    color: #4dabf7;
+}
+
+/* File Preview Modal */
+.preview-modal-content {
+    max-width: 90vw;
+    max-height: 90vh;
+    width: 1000px;
+}
+
+#preview-container iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    border-radius: 8px;
+}
+
+#preview-container img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+}
+
+#preview-container pre {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    overflow: auto;
+    max-height: 100%;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}

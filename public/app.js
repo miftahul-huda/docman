@@ -325,7 +325,10 @@ function renderDocuments(documents) {
                         <i class="far fa-file" style="color: #666;"></i>
                         <span title="${file.originalName}">${file.originalName}</span>
                         <span style="color: #999; font-size: 0.8rem;">(${formatSize(file.size)})</span>
-                        <a href="${API_URL}/download/${doc._id}/${file._id}" class="btn-icon small" title="Download" style="margin-left: auto;">
+                        <button class="btn-icon small" onclick='previewFile("${doc._id}", "${file._id}", "${file.originalName}", "${file.driveFileId}")' title="Preview" style="margin-left: auto;">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <a href="${API_URL}/download/${doc._id}/${file._id}" class="btn-icon small" title="Download">
                             <i class="fas fa-download"></i>
                         </a>
                     </li>
@@ -339,7 +342,8 @@ function renderDocuments(documents) {
         tr.innerHTML = `
             <td style="vertical-align: top;">
                 <div style="display: flex; flex-direction: column; gap: 5px;">
-                    <span style="font-weight: 600; font-size: 1.1rem; color: var(--text-color);">${doc.title || 'Untitled'}</span>
+                    <span style="font-weight: 600; font-size: 1.1rem; color: var(--primary-color); cursor: pointer;" 
+                          onclick='showDocumentDetails(${JSON.stringify(doc)})'>${doc.title || 'Untitled'}</span>
                     <div style="font-size: 0.9rem; color: #666;">${shortNote}</div>
                 </div>
             </td>
@@ -473,17 +477,17 @@ async function uploadAllFiles() {
         } else {
             const errorData = await response.json();
             if (response.status === 401 && errorData.code === 'MISSING_REFRESH_TOKEN') {
-                alert('Google Drive access expired. Redirecting to login...');
+                showAlert('Google Drive access expired. Redirecting to login...', 'warning');
                 window.location.href = '/auth/google?force=true';
                 return;
             }
-            alert(`Upload failed: ${errorData.message || 'Unknown error'}`);
+            showAlert(`Upload failed: ${errorData.message || 'Unknown error'}`, 'error');
             uploadProgress.classList.add('hidden');
             uploadActions.classList.remove('hidden');
         }
     } catch (error) {
         console.error('Error uploading:', error);
-        alert('Error uploading files');
+        showAlert('Error uploading files', 'error');
         uploadProgress.classList.add('hidden');
         uploadActions.classList.remove('hidden');
     } finally {
@@ -525,7 +529,7 @@ async function saveNote() {
             editModal.classList.add('hidden');
             fetchDocuments();
         } else {
-            alert('Failed to update document');
+            showAlert('Failed to update document', 'error');
         }
     } catch (error) {
         console.error('Error updating document:', error);
@@ -587,9 +591,187 @@ async function performDelete(id) {
         if (response.ok) {
             fetchDocuments();
         } else {
-            alert('Failed to delete document');
+            showAlert('Failed to delete document', 'error');
         }
     } catch (error) {
         console.error('Error deleting document:', error);
     }
 }
+
+// Custom Alert Modal
+const alertModal = document.getElementById('alert-modal');
+const alertIcon = document.getElementById('alert-icon');
+const alertMessage = document.getElementById('alert-message');
+const alertOkBtn = document.getElementById('alert-ok-btn');
+const closeAlertModal = document.getElementById('close-alert-modal');
+
+function showAlert(message, type = 'info') {
+    // Set icon based on type
+    alertIcon.className = 'fas';
+    switch (type) {
+        case 'error':
+            alertIcon.classList.add('fa-exclamation-circle', 'error');
+            break;
+        case 'success':
+            alertIcon.classList.add('fa-check-circle', 'success');
+            break;
+        case 'warning':
+            alertIcon.classList.add('fa-exclamation-triangle', 'warning');
+            break;
+        default:
+            alertIcon.classList.add('fa-info-circle', 'info');
+    }
+
+    alertMessage.textContent = message;
+    alertModal.classList.remove('hidden');
+}
+
+function closeAlert() {
+    alertModal.classList.add('hidden');
+}
+
+if (alertOkBtn) alertOkBtn.addEventListener('click', closeAlert);
+if (closeAlertModal) closeAlertModal.addEventListener('click', closeAlert);
+
+window.addEventListener('click', (e) => {
+    if (e.target === alertModal) closeAlert();
+});
+
+// File Preview Modal
+const previewModal = document.getElementById('preview-modal');
+const previewTitle = document.getElementById('preview-title');
+const previewContainer = document.getElementById('preview-container');
+const closePreviewModal = document.getElementById('close-preview-modal');
+
+window.previewFile = async (docId, fileId, fileName, driveFileId) => {
+    previewTitle.textContent = fileName;
+    previewContainer.innerHTML = '<p style="text-align: center; padding: 40px;">Loading preview...</p>';
+    previewModal.classList.remove('hidden');
+
+    const extension = fileName.split('.').pop().toLowerCase();
+    const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg'];
+    const textExtensions = ['txt', 'md', 'json', 'xml', 'csv', 'log'];
+
+    if (imageExtensions.includes(extension)) {
+        // Preview images directly
+        previewContainer.innerHTML = `<img src="${API_URL}/download/${docId}/${fileId}" alt="${fileName}">`;
+    } else if (extension === 'pdf' || ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(extension)) {
+        // Use Google Drive viewer for PDFs and Office docs
+        const viewerUrl = `https://drive.google.com/file/d/${driveFileId}/preview`;
+        previewContainer.innerHTML = `<iframe src="${viewerUrl}" allow="autoplay"></iframe>`;
+    } else if (textExtensions.includes(extension)) {
+        // Fetch and display text files
+        try {
+            const response = await fetch(`${API_URL}/download/${docId}/${fileId}`);
+            const text = await response.text();
+            previewContainer.innerHTML = `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+        } catch (error) {
+            previewContainer.innerHTML = '<p style="text-align: center; padding: 40px; color: #ff6b6b;">Failed to load preview</p>';
+        }
+    } else {
+        previewContainer.innerHTML = `
+            <div style="text-align: center; padding: 40px;">
+                <i class="fas fa-file" style="font-size: 4rem; color: #ccc; margin-bottom: 20px;"></i>
+                <p>Preview not available for this file type.</p>
+                <a href="${API_URL}/download/${docId}/${fileId}" class="btn-primary" style="display: inline-block; margin-top: 20px; text-decoration: none;">Download File</a>
+            </div>
+        `;
+    }
+};
+
+function closePreview() {
+    previewModal.classList.add('hidden');
+    previewContainer.innerHTML = '';
+}
+
+if (closePreviewModal) closePreviewModal.addEventListener('click', closePreview);
+
+window.addEventListener('click', (e) => {
+    if (e.target === previewModal) closePreview();
+});
+
+// Document Details Modal
+const documentDetailsModal = document.getElementById('document-details-modal');
+const documentDetailsTitle = document.getElementById('document-details-title');
+const documentDetailsNote = document.getElementById('document-details-note');
+const documentDetailsFiles = document.getElementById('document-details-files');
+const closeDocumentDetailsModal = document.getElementById('close-document-details-modal');
+
+let currentDocumentId = null;
+
+window.showDocumentDetails = (doc) => {
+    currentDocumentId = doc._id;
+    documentDetailsTitle.textContent = doc.title || 'Untitled';
+    documentDetailsNote.innerHTML = doc.note || '<p style="color: #999;">No note</p>';
+
+    // Render files list
+    let filesHtml = '';
+    if (doc.files && doc.files.length > 0) {
+        filesHtml = '<div style="display: flex; flex-direction: column; gap: 10px;">';
+        doc.files.forEach(file => {
+            filesHtml += `
+                <div style="display: flex; align-items: center; gap: 10px; padding: 12px; background: white; border-radius: 8px; border: 1px solid #eee;">
+                    <i class="far fa-file" style="font-size: 1.5rem; color: #666;"></i>
+                    <div style="flex: 1;">
+                        <div style="font-weight: 500;">${file.originalName}</div>
+                        <div style="font-size: 0.85rem; color: #999;">${formatSize(file.size)}</div>
+                    </div>
+                    <button class="btn-icon" onclick='previewFile("${doc._id}", "${file._id}", "${file.originalName}", "${file.driveFileId}")' title="Preview">
+                        <i class="fas fa-eye"></i>
+                    </button>
+                    <a href="${API_URL}/download/${doc._id}/${file._id}" class="btn-icon" title="Download">
+                        <i class="fas fa-download"></i>
+                    </a>
+                    <button class="btn-icon delete" onclick='removeFile("${doc._id}", "${file._id}", "${file.originalName}")' title="Remove">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `;
+        });
+        filesHtml += '</div>';
+    } else {
+        filesHtml = '<p style="color: #999; text-align: center; padding: 20px;">No files</p>';
+    }
+
+    documentDetailsFiles.innerHTML = filesHtml;
+    documentDetailsModal.classList.remove('hidden');
+};
+
+function closeDocumentDetails() {
+    documentDetailsModal.classList.add('hidden');
+    currentDocumentId = null;
+}
+
+if (closeDocumentDetailsModal) closeDocumentDetailsModal.addEventListener('click', closeDocumentDetails);
+
+window.addEventListener('click', (e) => {
+    if (e.target === documentDetailsModal) closeDocumentDetails();
+});
+
+// Remove file from document
+window.removeFile = async (docId, fileId, fileName) => {
+    if (!confirm(`Are you sure you want to remove "${fileName}"?`)) return;
+
+    try {
+        const response = await fetch(`${API_URL}/${docId}/files/${fileId}`, {
+            method: 'DELETE'
+        });
+
+        if (response.ok) {
+            showAlert('File removed successfully', 'success');
+            // Refresh the document details
+            const docResponse = await fetch(`${API_URL}/${docId}`);
+            if (docResponse.ok) {
+                const doc = await docResponse.json();
+                showDocumentDetails(doc);
+            }
+            // Refresh the main list
+            fetchDocuments();
+        } else {
+            showAlert('Failed to remove file', 'error');
+        }
+    } catch (error) {
+        console.error('Error removing file:', error);
+        showAlert('Error removing file', 'error');
+    }
+};
