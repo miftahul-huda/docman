@@ -126,7 +126,7 @@ function renderPagination(pagination) {
     prevBtn.className = 'pagination-btn';
     prevBtn.textContent = 'Previous';
     prevBtn.disabled = !hasPrevPage;
-    prevBtn.onclick = () => fetchDocuments(currentPage - 1);
+    prevBtn.onclick = () => fetchDocuments(parseInt(currentPage) - 1);
     paginationContainer.appendChild(prevBtn);
 
     // Page numbers
@@ -140,9 +140,45 @@ function renderPagination(pagination) {
     nextBtn.className = 'pagination-btn';
     nextBtn.textContent = 'Next';
     nextBtn.disabled = !hasNextPage;
-    nextBtn.onclick = () => fetchDocuments(currentPage + 1);
+    nextBtn.onclick = () => fetchDocuments(parseInt(currentPage) + 1);
     paginationContainer.appendChild(nextBtn);
 }
+
+// Fetch and display user profile
+async function fetchUserProfile() {
+    try {
+        const response = await fetch('/api/user');
+        if (response.ok) {
+            const user = await response.json();
+            const profileContainer = document.getElementById('user-profile');
+            if (profileContainer && user) {
+                profileContainer.innerHTML = `
+                    <img src="${user.image}" alt="${user.displayName}" style="width: 32px; height: 32px; border-radius: 50%;">
+                    <span style="font-weight: 500; font-size: 0.9rem;">${user.displayName}</span>
+                `;
+            }
+        }
+    } catch (error) {
+        console.error('Error fetching user profile:', error);
+    }
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    fetchDocuments();
+    fetchUserProfile(); // Fetch user profile
+    setupNavigation();
+
+    // Event delegation for delete buttons
+    documentsTableBody.addEventListener('click', async (e) => {
+        const deleteBtn = e.target.closest('.delete-btn');
+        if (deleteBtn) {
+            const id = deleteBtn.dataset.id;
+            console.log('Delete button clicked for ID:', id);
+            await deleteDocument(id);
+        }
+    });
+});
 
 function setupNavigation() {
     navLinks.forEach(link => {
@@ -279,26 +315,42 @@ function renderDocuments(documents) {
         const notePreview = tempDiv.textContent || tempDiv.innerText || '';
         const shortNote = notePreview.length > 50 ? notePreview.substring(0, 50) + '...' : (notePreview || '<span style="color: #ccc;">No note</span>');
 
+        // Build files list HTML
+        let filesHtml = '';
+        if (doc.files && doc.files.length > 0) {
+            filesHtml = '<ul class="file-list" style="list-style: none; padding: 0; margin: 0;">';
+            doc.files.forEach(file => {
+                filesHtml += `
+                    <li style="margin-bottom: 5px; display: flex; align-items: center; gap: 8px; font-size: 0.9rem;">
+                        <i class="far fa-file" style="color: #666;"></i>
+                        <span title="${file.originalName}">${file.originalName}</span>
+                        <span style="color: #999; font-size: 0.8rem;">(${formatSize(file.size)})</span>
+                        <a href="${API_URL}/download/${doc._id}/${file._id}" class="btn-icon small" title="Download" style="margin-left: auto;">
+                            <i class="fas fa-download"></i>
+                        </a>
+                    </li>
+                `;
+            });
+            filesHtml += '</ul>';
+        } else {
+            filesHtml = '<span style="color: #999;">No files</span>';
+        }
+
         tr.innerHTML = `
-            <td>
-                <div style="display: flex; align-items: center; gap: 10px;">
-                    <i class="far fa-file-alt" style="color: var(--primary-color); font-size: 1.2rem;"></i>
-                    <div style="display: flex; flex-direction: column;">
-                        <span style="font-weight: 500;">${doc.title || doc.originalName}</span>
-                        <span style="font-size: 0.8rem; color: #999;">${doc.originalName}</span>
-                    </div>
+            <td style="vertical-align: top;">
+                <div style="display: flex; flex-direction: column; gap: 5px;">
+                    <span style="font-weight: 600; font-size: 1.1rem; color: var(--text-color);">${doc.title || 'Untitled'}</span>
+                    <div style="font-size: 0.9rem; color: #666;">${shortNote}</div>
                 </div>
             </td>
-            <td>${formatSize(doc.size)}</td>
-            <td>${new Date(doc.uploadDate).toLocaleDateString()}</td>
-            <td>${shortNote}</td>
-            <td>
-                <button class="btn-icon" onclick='openEditModal("${doc._id}", ${JSON.stringify(doc.note || "")}, "${doc.title || doc.originalName}")' title="Edit">
+            <td style="vertical-align: top;">
+                ${filesHtml}
+            </td>
+            <td style="vertical-align: top;">${new Date(doc.uploadDate).toLocaleDateString()}</td>
+            <td style="vertical-align: top;">
+                <button class="btn-icon" onclick='openEditModal("${doc._id}", ${JSON.stringify(doc.note || "")}, "${doc.title || "Untitled"}")' title="Edit">
                     <i class="fas fa-pen"></i>
                 </button>
-                <a href="${API_URL}/download/${doc._id}" class="btn-icon" title="Download">
-                    <i class="fas fa-download"></i>
-                </a>
                 <button class="btn-icon delete-btn" data-id="${doc._id}" title="Delete">
                     <i class="fas fa-trash"></i>
                 </button>
@@ -376,18 +428,19 @@ async function uploadAllFiles() {
     if (stagedFiles.length === 0) return;
 
     const formData = new FormData();
-    const metadata = [];
 
     const batchTitle = batchTitleInput.value;
     const batchNote = batchQuill.root.innerHTML; // Get from Quill
 
     stagedFiles.forEach(item => {
         formData.append('files', item.file);
-        metadata.push({
-            title: batchTitle || item.file.name, // Use batch title or fallback to filename
-            note: batchNote
-        });
     });
+
+    // Send single metadata object for the whole batch
+    const metadata = {
+        title: batchTitle,
+        note: batchNote
+    };
 
     formData.append('metadata', JSON.stringify(metadata));
 
@@ -418,7 +471,13 @@ async function uploadAllFiles() {
                 switchView('list');
             }, 500);
         } else {
-            alert('Upload failed');
+            const errorData = await response.json();
+            if (response.status === 401 && errorData.code === 'MISSING_REFRESH_TOKEN') {
+                alert('Google Drive access expired. Redirecting to login...');
+                window.location.href = '/auth/google?force=true';
+                return;
+            }
+            alert(`Upload failed: ${errorData.message || 'Unknown error'}`);
             uploadProgress.classList.add('hidden');
             uploadActions.classList.remove('hidden');
         }

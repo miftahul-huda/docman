@@ -46,9 +46,19 @@ router.post('/upload', upload.array('files', 10), async (req, res) => {
             return res.status(400).json({ message: 'No files uploaded' });
         }
 
-        let metadata = [];
+        // Check for refresh token
+        if (!req.user.refreshToken) {
+            console.log('User missing refresh token during upload');
+            return res.status(401).json({
+                message: 'Google Drive access expired. Please log in again.',
+                code: 'MISSING_REFRESH_TOKEN'
+            });
+        }
+
+        let metadata = {};
         try {
-            metadata = JSON.parse(req.body.metadata || '[]');
+            // Expecting metadata to be a single object with title and note
+            metadata = JSON.parse(req.body.metadata || '{}');
             console.log('Metadata:', metadata);
         } catch (e) {
             console.error('Error parsing metadata:', e);
@@ -56,12 +66,10 @@ router.post('/upload', upload.array('files', 10), async (req, res) => {
 
         console.log('Getting Drive client...');
         const drive = getDriveClient(req);
-        const savedDocuments = [];
+        const uploadedFiles = [];
 
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
-            const meta = metadata[i] || {};
-
             console.log(`Uploading file ${i + 1}/${files.length}: ${file.originalname}`);
 
             const bufferStream = new stream.PassThrough();
@@ -81,24 +89,28 @@ router.post('/upload', upload.array('files', 10), async (req, res) => {
 
             console.log(`File uploaded to Drive with ID: ${driveResponse.data.id}`);
 
-            const newDoc = new Document({
-                title: meta.title || file.originalname,
-                note: meta.note || '',
+            uploadedFiles.push({
                 originalName: file.originalname,
-                filename: file.originalname, // Keep original name as filename
+                filename: file.originalname,
                 driveFileId: driveResponse.data.id,
                 webViewLink: driveResponse.data.webViewLink,
                 webContentLink: driveResponse.data.webContentLink,
                 size: file.size,
                 mimetype: file.mimetype
             });
-            const savedDoc = await newDoc.save();
-            console.log(`Document saved to DB with ID: ${savedDoc._id}`);
-            savedDocuments.push(savedDoc);
         }
 
-        console.log(`Upload complete. ${savedDocuments.length} documents saved.`);
-        res.status(201).json(savedDocuments);
+        const newDoc = new Document({
+            title: metadata.title || (files.length > 0 ? files[0].originalname : 'Untitled'),
+            note: metadata.note || '',
+            owner: req.user._id, // Assign owner
+            files: uploadedFiles
+        });
+
+        const savedDoc = await newDoc.save();
+        console.log(`Document saved to DB with ID: ${savedDoc._id}`);
+
+        res.status(201).json([savedDoc]); // Return array to match previous API response structure roughly
     } catch (error) {
         console.error('Upload Error:', error);
         console.error('Error stack:', error.stack);
@@ -109,20 +121,17 @@ router.post('/upload', upload.array('files', 10), async (req, res) => {
 // Get All Documents with Pagination and Search
 router.get('/', async (req, res) => {
     try {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
+        const { page = 1, limit = 10, search = '' } = req.query;
         const skip = (page - 1) * limit;
-        const search = req.query.search || '';
 
         // Build search filter
-        let filter = {};
+        let filter = { owner: req.user._id }; // Filter by owner
         if (search) {
-            filter = {
-                $or: [
-                    { title: { $regex: search, $options: 'i' } },
-                    { note: { $regex: search, $options: 'i' } }
-                ]
-            };
+            filter.$or = [
+                { title: { $regex: search, $options: 'i' } },
+                { note: { $regex: search, $options: 'i' } },
+                { 'files.originalName': { $regex: search, $options: 'i' } } // Search in filenames too
+            ];
         }
 
         const totalDocuments = await Document.countDocuments(filter);
@@ -152,22 +161,20 @@ router.get('/', async (req, res) => {
 // Update Document Note & Title
 router.put('/:id', async (req, res) => {
     try {
-        const { note, title } = req.body;
-        const updateData = {};
-        if (note !== undefined) updateData.note = note;
-        if (title !== undefined) updateData.title = title;
-
-        const document = await Document.findByIdAndUpdate(
-            req.params.id,
-            updateData,
+        const { title, note } = req.body;
+        const updatedDoc = await Document.findOneAndUpdate(
+            { _id: req.params.id, owner: req.user._id }, // Ensure ownership
+            { title, note },
             { new: true }
         );
-        if (!document) {
-            return res.status(404).json({ message: 'Document not found' });
+
+        if (!updatedDoc) {
+            return res.status(404).json({ message: 'Document not found or unauthorized' });
         }
-        res.json(document);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
+
+        res.json(updatedDoc);
+    } catch (err) {
+        res.status(500).json({ message: err.message });
     }
 });
 
@@ -175,21 +182,25 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     console.log(`Delete request for ID: ${req.params.id}`);
     try {
-        const document = await Document.findById(req.params.id);
+        const document = await Document.findOne({ _id: req.params.id, owner: req.user._id }); // Ensure ownership
         if (!document) {
-            console.log('Document not found in DB');
-            return res.status(404).json({ message: 'Document not found' });
+            console.log('Document not found in DB or unauthorized');
+            return res.status(404).json({ message: 'Document not found or unauthorized' });
         }
 
-        // Delete from Drive
-        try {
-            console.log(`Attempting to delete Drive file: ${document.driveFileId}`);
+        // Delete all files from Drive
+        if (document.files && document.files.length > 0) {
             const drive = getDriveClient(req);
-            await drive.files.delete({ fileId: document.driveFileId });
-            console.log('Drive file deleted successfully');
-        } catch (driveError) {
-            console.error('Error deleting from Drive:', driveError);
-            // Continue to delete from DB even if Drive fails (or file already gone)
+            for (const file of document.files) {
+                try {
+                    console.log(`Attempting to delete Drive file: ${file.driveFileId}`);
+                    await drive.files.delete({ fileId: file.driveFileId });
+                    console.log('Drive file deleted successfully');
+                } catch (driveError) {
+                    console.error(`Error deleting file ${file.driveFileId} from Drive:`, driveError);
+                    // Continue to delete others and DB entry
+                }
+            }
         }
 
         await Document.findByIdAndDelete(req.params.id);
@@ -201,28 +212,29 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
-// Download Document (Proxy or Redirect)
-router.get('/download/:id', async (req, res) => {
-    console.log(`Download request for ID: ${req.params.id}`);
+// Download File
+router.get('/download/:docId/:fileId', async (req, res) => {
     try {
-        const document = await Document.findById(req.params.id);
+        const document = await Document.findOne({ _id: req.params.docId, owner: req.user._id }); // Ensure ownership
         if (!document) {
-            console.log('Document not found in DB');
-            return res.status(404).json({ message: 'Document not found' });
+            return res.status(404).json({ message: 'Document not found or unauthorized' });
         }
 
-        // Redirect to Drive Web Content Link (easiest for now)
-        // Or stream it if we want to hide the Drive URL
-        // Let's stream it to keep the experience consistent
-        console.log(`Attempting to download Drive file: ${document.driveFileId}`);
+        const file = document.files.find(f => f._id.toString() === req.params.fileId);
+        if (!file) {
+            console.log('File not found in Document');
+            return res.status(404).json({ message: 'File not found' });
+        }
+
+        console.log(`Attempting to download Drive file: ${file.driveFileId}`);
         const drive = getDriveClient(req);
         const result = await drive.files.get({
-            fileId: document.driveFileId,
+            fileId: file.driveFileId,
             alt: 'media'
         }, { responseType: 'stream' });
 
-        res.setHeader('Content-Disposition', `attachment; filename="${document.originalName}"`);
-        res.setHeader('Content-Type', document.mimetype);
+        res.setHeader('Content-Disposition', `attachment; filename="${file.originalName}"`);
+        res.setHeader('Content-Type', file.mimetype);
 
         result.data.pipe(res);
         console.log('Download stream started');

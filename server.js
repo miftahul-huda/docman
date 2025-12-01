@@ -40,15 +40,37 @@ app.use(session({
 }));
 
 // Passport Setup
+const User = require('./models/User');
+
+// ... (existing code)
+
+// Passport Setup
 app.use(passport.initialize());
 app.use(passport.session());
 
 passport.serializeUser((user, done) => {
-    done(null, user);
+    // user is a plain object from GoogleStrategy return, so use _id
+    done(null, user._id);
 });
 
-passport.deserializeUser((user, done) => {
-    done(null, user);
+passport.deserializeUser(async (id, done) => {
+    try {
+        // Handle legacy session where id might be the full user object
+        if (typeof id === 'object' && id !== null) {
+            // If it's the old format, it might have profile.id (googleId)
+            if (id.profile && id.profile.id) {
+                const user = await User.findOne({ googleId: id.profile.id });
+                if (user) return done(null, user);
+            }
+            // If we can't recover, return null (logs user out)
+            return done(null, null);
+        }
+
+        const user = await User.findById(id);
+        done(null, user);
+    } catch (err) {
+        done(err, null);
+    }
 });
 
 passport.use(new GoogleStrategy({
@@ -57,20 +79,76 @@ passport.use(new GoogleStrategy({
     callbackURL: process.env.CALLBACK_URL || "http://localhost:3000/auth/google/callback",
     scope: ['profile', 'email', 'https://www.googleapis.com/auth/drive.file']
 },
-    function (accessToken, refreshToken, profile, cb) {
-        // In a real app, you'd find or create a user in your DB here
-        // For now, we just pass the profile and tokens
-        return cb(null, { profile, accessToken, refreshToken });
+    async function (accessToken, refreshToken, profile, cb) {
+        try {
+            let user = await User.findOne({ googleId: profile.id });
+
+            if (user) {
+                // Update refresh token if we got a new one
+                if (refreshToken) {
+                    user.refreshToken = refreshToken;
+                    await user.save();
+                }
+            } else {
+                // Create new user
+                const newUser = {
+                    googleId: profile.id,
+                    email: profile.emails[0].value,
+                    displayName: profile.displayName,
+                    firstName: profile.name.givenName,
+                    lastName: profile.name.familyName,
+                    image: profile.photos[0].value,
+                    refreshToken: refreshToken
+                };
+                user = await User.create(newUser);
+            }
+
+            // Pass the user object with the accessToken attached (for the session)
+            // We don't save accessToken to DB as it expires quickly
+            const userObj = user.toObject();
+            userObj.accessToken = accessToken;
+            // Ensure we have the refresh token in the session user object, either from args or DB
+            userObj.refreshToken = refreshToken || user.refreshToken;
+
+            return cb(null, userObj);
+        } catch (err) {
+            console.error('Error in Google Strategy:', err);
+            return cb(err, null);
+        }
     }
 ));
 
 // Auth Routes
-app.get('/auth/google',
-    passport.authenticate('google', { scope: ['profile', 'email', 'https://www.googleapis.com/auth/drive.file'], accessType: 'offline', prompt: 'consent' }));
+app.get('/auth/google', (req, res, next) => {
+    const options = {
+        scope: ['profile', 'email', 'https://www.googleapis.com/auth/drive.file'],
+        accessType: 'offline',
+        prompt: 'select_account' // Default to account selection
+    };
+
+    // If force param is present, force consent to get refresh token
+    if (req.query.force) {
+        options.prompt = 'consent select_account';
+    }
+
+    passport.authenticate('google', options)(req, res, next);
+});
 
 app.get('/auth/google/callback',
     passport.authenticate('google', { failureRedirect: '/login.html' }),
     function (req, res) {
+        // Check if we have a refresh token
+        if (!req.user.refreshToken) {
+            console.log('Missing refresh token, forcing consent...');
+            // Logout to clear the partial session
+            req.logout((err) => {
+                if (err) console.error('Logout error during re-auth:', err);
+                // Redirect to auth with forced consent
+                res.redirect('/auth/google?force=true');
+            });
+            return;
+        }
+
         // Successful authentication, redirect home.
         res.redirect('/');
     });
@@ -90,7 +168,8 @@ app.get('/logout', (req, res, next) => {
 
 app.get('/api/user', (req, res) => {
     if (req.isAuthenticated()) {
-        res.json(req.user.profile);
+        // req.user is now the User document (plus accessToken attached in strategy)
+        res.json(req.user);
     } else {
         res.status(401).json({ message: 'Not authenticated' });
     }

@@ -5,26 +5,9 @@ const documentSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
-  originalName: {
-    type: String,
-    required: true
-  },
-  filename: {
-    type: String,
-    required: true
-  },
-  driveFileId: {
-    type: String,
-    required: true
-  },
-  webViewLink: String,
-  webContentLink: String,
-  size: {
-    type: Number,
-    required: true
-  },
-  mimetype: {
-    type: String,
+  owner: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
     required: true
   },
   note: {
@@ -34,7 +17,31 @@ const documentSchema = new mongoose.Schema({
   uploadDate: {
     type: Date,
     default: Date.now
-  }
+  },
+  files: [{
+    originalName: {
+      type: String,
+      required: true
+    },
+    filename: {
+      type: String,
+      required: true
+    },
+    driveFileId: {
+      type: String,
+      required: true
+    },
+    webViewLink: String,
+    webContentLink: String,
+    size: {
+      type: Number,
+      required: true
+    },
+    mimetype: {
+      type: String,
+      required: true
+    }
+  }]
 });
 
 module.exports = mongoose.model('Document', documentSchema);

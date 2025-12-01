@@ -17,20 +17,25 @@
 <body>
     <div class="container">
         <header>
+            <div class="header-top-bar">
+                <div id="user-profile" class="user-profile">
+                    <!-- Profile info will be injected here -->
+                </div>
+                <a href="/logout" class="nav-link logout-link">Logout</a>
+            </div>
             <div class="logo-container">
                 <img src="logo.png" alt="Document Manager Logo" class="app-logo">
             </div>
             <nav>
                 <ul class="nav-links">
-                    <li><a href="#" class="nav-link active" data-view="upload">Upload</a></li>
-                    <li><a href="#" class="nav-link" data-view="list">My Documents</a></li>
-                    <li><a href="/logout" class="nav-link" style="color: #ff6b6b;">Logout</a></li>
+                    <li><a href="#" class="nav-link active" data-view="list">My Documents</a></li>
+                    <li><a href="#" class="nav-link" data-view="upload">Upload</a></li>
                 </ul>
             </nav>
         </header>
 
         <main>
-            <div id="view-upload" class="view-section">
+            <div id="view-upload" class="view-section hidden">
                 <section class="upload-section">
                     <div class="upload-area" id="drop-zone">
                         <i class="fas fa-cloud-upload-alt"></i>
@@ -74,7 +79,7 @@
                 </section>
             </div>
 
-            <div id="view-list" class="view-section hidden">
+            <div id="view-list" class="view-section">
                 <section class="documents-section">
                     <h2>Your Documents</h2>
                     <div class="search-controls">
@@ -98,9 +103,8 @@
                             <thead>
                                 <tr>
                                     <th>Title</th>
-                                    <th>Size</th>
+                                    <th>Files</th>
                                     <th>Date</th>
-                                    <th>Note</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
